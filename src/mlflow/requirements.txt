@@ -1,0 +1,4 @@
+cryptography 
+boto3 #s3 dependencies
+mlflow
+psycopg2-binary #communication with postgres
