@@ -29,7 +29,7 @@ x-airflow-common: &airflow-common
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
     # The following line can be used to set a custom config file, stored in the local config folder
     #AIRFLOW_CONFIG: "/opt/airflow/config/airflow.cfg"  -?manually changed
-    MLFLOW_TRACKING_URI: 'http://mlflow-server:5500'
+    MLFLOW_TRACKING_URI: "http://mlflow-server:5500"
     MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
 
   volumes:
@@ -39,7 +39,7 @@ x-airflow-common: &airflow-common
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     - ./models:/app/models
     - ./config.yaml:/app/config.yaml
-    - ./env:app/.env
+    - ./env:/app/.env
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
     redis:
@@ -56,6 +56,7 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+      - ./init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init_multiple_dbs.sh
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
@@ -330,16 +331,16 @@ services:
     networks:
       - crypto-predictor
 
-#MINIO SERVER
+  #MINIO SERVER
 
   mc:
     image: minio/mc
     platform: linux/amd64
     depends_on:
-    - minio
+      - minio
     container_name: mc
     env_file:
-    - .env
+      - .env
     entrypoint: >
       /bin/sh -c "
       /tmp/wait-for-it.sh minio:9000 &&
@@ -369,8 +370,7 @@ services:
     networks:
       - crypto-predictor
 
-
-## MLFLOW SERVER INITIALIZATION
+  ## MLFLOW SERVER INITIALIZATION
   mlflow-server:
     restart: always
     build: ./mlflow
@@ -393,7 +393,6 @@ volumes:
   postgres-db-volume:
   minio_data:
 
-
 networks:
-  fraud-detection:
+  crypto-predictor:
     driver: bridge
