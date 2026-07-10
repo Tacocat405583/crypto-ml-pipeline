@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+.venv/
+
+# Local data & models (generated, not source)
+data/
+models/
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+
+# Secrets
+.env
+!src/.env          # existing infra .env is checked in (contains only local dev creds)
+
+# Notebooks / scratch
+.ipynb_checkpoints/
+scratch/
+
+# OS
+.DS_Store
+Thumbs.db
