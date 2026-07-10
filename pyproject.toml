@@ -15,4 +15,5 @@ dependencies = [
     "pyyaml",
     "websockets",
     "confluent-kafka",
+    "requests",
 ]
