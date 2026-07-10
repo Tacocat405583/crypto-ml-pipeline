@@ -19,7 +19,7 @@ models/
 
 # Secrets
 .env
-!src/.env          # existing infra .env is checked in (contains only local dev creds)
+!infra/.env        # existing infra .env is checked in (contains only local dev creds)
 
 # Notebooks / scratch
 .ipynb_checkpoints/
