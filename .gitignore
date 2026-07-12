@@ -8,6 +8,7 @@ __pycache__/
 
 # Virtual env
 .venv/
+venv
 
 # Local data & models (generated, not source)
 data/
