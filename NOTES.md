@@ -25,7 +25,31 @@ Thought process:
    The `if __name__ == "__main__"` block is just a smoke test so I can run the file
    directly and eyeball the output.
 
+### Response shape (for reference)
+
+The spot endpoint returns something like:
+
+```json
+{ "data": { "amount": "60000.00", "base": "BTC", "currency": "USD" } }
+```
+
+So the price lives at `data["data"]["amount"]` (a string — will need casting to float
+before any math).
+
 ### End goal this week
 
 Call this on a 24h cadence and append each reading into a JSON file, so I build up a
 running price history to feed the ML pipeline later.
+
+Plan / open questions:
+- **Scheduling.** Options: OS-level cron / Task Scheduler, or a small loop with a
+  `time.sleep`, or later an Airflow/cron job in the parked `infra/` layer. Leaning toward
+  the simplest scheduler that survives a reboot.
+- **Storage format.** Append each poll as one record `{ "timestamp": ..., "price": ... }`
+  into a JSON file. Deciding between a single growing JSON array vs. JSON-lines (one
+  object per line) — JSONL is friendlier for appends and less likely to corrupt the whole
+  file on a crash mid-write.
+- **Robustness to add before it runs unattended:** timeout on the request, retry on
+  transient failures, and a guard so a bad/empty response doesn't poison the history file.
+- **Timestamp.** Record capture time in UTC alongside each price so the series is ordered
+  regardless of where it runs.
