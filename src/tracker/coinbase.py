@@ -23,12 +23,19 @@ class CoinbaseClient:
 
         response = requests.get(self._url)
         data = response.json()
+        data = data['data']['amount']
+        self.append_json(data=data)
 
         return data
     
-    def append_json(self):
+    def append_json(self,data:dict):
 
-        
+
+        try:
+            with open("ticker_price.json","a",encoding="utf-8") as f:
+                f.write(str(data))
+        except FileNotFoundError:
+            print("Cannot find file")
     
 
 if __name__ == "__main__":
