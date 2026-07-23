@@ -1,5 +1,5 @@
 import requests
-
+from pathlib import Path
 
 url = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
 
@@ -12,6 +12,8 @@ url = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
 
 # print("This is after parsing")
 # print(data)
+
+file_path = Path("ticker_price.json")
 
 class CoinbaseClient:
 
@@ -30,12 +32,13 @@ class CoinbaseClient:
     
     def append_json(self,data:dict):
 
-
-        try:
+        if file_path.exists():
             with open("ticker_price.json","a",encoding="utf-8") as f:
                 f.write(str(data))
-        except FileNotFoundError:
-            print("Cannot find file")
+        else:
+            with open("ticker_price.json","w",encoding="utf-8") as f:
+                f.write(str(data))
+            
     
 
 if __name__ == "__main__":
