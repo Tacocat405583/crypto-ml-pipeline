@@ -3,15 +3,6 @@ from pathlib import Path
 
 url = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
 
-# response = requests.get(url)
-
-# print(response.status_code)
-# print(response.text)
-
-# data = response.json()
-
-# print("This is after parsing")
-# print(data)
 
 file_path = Path("ticker_price.json")
 
