@@ -2,6 +2,7 @@ import json
 import requests
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 
 url = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
 
@@ -16,6 +17,11 @@ class CoinbaseClient:
 
     def get_spot_price(self) -> dict:
         data = self._fetch()
+
+        if data == False:
+            return {}
+
+
         price = float(data['data']['amount'])
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -29,16 +35,25 @@ class CoinbaseClient:
 
     def _fetch(self):
 
-        response = requests.get(self._url)
+        try:
+            response = requests.get(self._url)
 
-        if response.status_code == 200:
-            data = response.json()
-            return data
+            if response.status_code == 200:
+                data = response.json()
+                return data
+            else:
+                return False
+        except requests.RequestException as e:
+            print(f"Error: {e}",file=sys.stderr)
+
 
 
 
 if __name__ == "__main__":
     client = CoinbaseClient(url)
     record = client.get_spot_price()
-    client.append_json(record)
+    if not record:
+        sys.exit(1)
+    else:
+        client.append_json(record)
     print(record)
