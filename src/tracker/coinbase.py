@@ -22,8 +22,16 @@ class CoinbaseClient:
         if data == False:
             return {}
 
+        try:
+            price = float(data['data']['amount'])
+        except (KeyError, TypeError, ValueError) as e:
+            print(f"bad payload: {type(e).__name__}: {e}", file=sys.stderr)
+            return {}
 
-        price = float(data['data']['amount'])
+        if price <= 0:
+            print(f"Implausible price: {price}", file=sys.stderr)
+            return {}
+
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "price": price,
@@ -51,11 +59,7 @@ class CoinbaseClient:
                     time.sleep(10)
                 continue
 
-
         return False
-                
-
-
 
 
 if __name__ == "__main__":
