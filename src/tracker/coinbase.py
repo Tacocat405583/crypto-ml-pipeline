@@ -36,13 +36,19 @@ class CoinbaseClient:
     def _fetch(self):
 
         try:
-            response = requests.get(self._url)
+            response = requests.get(self._url,timeout=(5,10))
 
             if response.status_code == 200:
                 data = response.json()
                 return data
             else:
                 return False
+        except requests.exceptions.ConnectTimeout:
+            print("The connection timed out.")
+        except requests.exceptions.ReadTimeout:
+            print("The server took too long to send data.")
+        except requests.exceptions.Timeout:
+            print("The request timed out generally.")
         except requests.RequestException as e:
             print(f"Error: {e}",file=sys.stderr)
 
