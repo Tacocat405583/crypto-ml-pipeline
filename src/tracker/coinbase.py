@@ -15,11 +15,8 @@ class CoinbaseClient:
 
 
     def get_spot_price(self) -> dict:
-
-        response = requests.get(self._url)
-        data = response.json()
+        data = self._fetch()
         price = float(data['data']['amount'])
-
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "price": price,
@@ -29,6 +26,14 @@ class CoinbaseClient:
 
         with open(path,"a",encoding="utf-8") as f:
             f.write(json.dumps(data) + "\n")
+
+    def _fetch(self):
+
+        response = requests.get(self._url)
+
+        if response.status_code == 200:
+            data = response.json()
+            return data
 
 
 
