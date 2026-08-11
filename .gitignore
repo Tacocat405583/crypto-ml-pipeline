@@ -26,6 +26,9 @@ models/
 .ipynb_checkpoints/
 scratch/
 
+# Mini Exchange design doc — belongs to its own repo, kept here until it moves
+README.md
+
 # OS
 .DS_Store
 Thumbs.db
