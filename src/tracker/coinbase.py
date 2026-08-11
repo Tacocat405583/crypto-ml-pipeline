@@ -5,10 +5,20 @@ from pathlib import Path
 import sys
 import time
 
-url = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
+SYMBOL = "BTC-USD"
+url = f"https://api.exchange.coinbase.com/products/{SYMBOL}/ticker"
 ATTEMPTS = 3
 
 file_path = Path(__file__).parent / "ticker_price.jsonl"
+
+
+def opt_float(value):
+    # bid/ask/volume are nice to have — a missing one shouldn't discard the price
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 
 class CoinbaseClient:
 
@@ -23,7 +33,7 @@ class CoinbaseClient:
             return {}
 
         try:
-            price = float(data['data']['amount'])
+            price = float(data['price'])
         except (KeyError, TypeError, ValueError) as e:
             print(f"bad payload: {type(e).__name__}: {e}", file=sys.stderr)
             return {}
@@ -32,14 +42,22 @@ class CoinbaseClient:
             print(f"Implausible price: {price}", file=sys.stderr)
             return {}
 
+        fetched_at = datetime.now(timezone.utc).isoformat()
+
         return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            # exchange-side time when available, our clock only as a fallback
+            "timestamp": data.get("time") or fetched_at,
+            "fetched_at": fetched_at,
+            "symbol": SYMBOL,
             "price": price,
+            "bid": opt_float(data.get("bid")),
+            "ask": opt_float(data.get("ask")),
+            "volume_24h": opt_float(data.get("volume")),
         }
 
     def append_json(self,data:dict,path:Path=file_path):
 
-        with open(path,"a",encoding="utf-8") as f:
+        with open(path,"a",encoding="utf-8",newline="\n") as f:
             f.write(json.dumps(data) + "\n")
 
     def _fetch(self):
