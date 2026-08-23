@@ -20,15 +20,26 @@ models/
 
 # Secrets
 .env
-!infra/.env        # existing infra .env is checked in (contains only local dev creds)
+
+# Parked Airflow/Kafka stack - kept on disk, untracked. Removed from the remote
+# 2026-08-22. The negation that used to whitelist infra/.env is gone on purpose.
+infra/
 
 # Notebooks / scratch
 .ipynb_checkpoints/
 scratch/
 
-# Mini Exchange design doc — belongs to its own repo, kept here until it moves
-README.md
+# Mini Exchange design doc — belongs to its own repo, kept here until it moves.
+# Leading slash matters: a bare 'README.md' matches every README at any depth.
+/README.md
+
+# Repo audit — a working snapshot, not a source file
+AUDIT.md
 
 # OS
 .DS_Store
 Thumbs.db
+
+# C++ build output
+build/
+services/**/build/
