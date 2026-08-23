@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "mingw",
+      "displayName": "MSYS2 mingw64",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw64/bin/mingw32-make.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "mingw", "configurePreset": "mingw" }
+  ]
+}
