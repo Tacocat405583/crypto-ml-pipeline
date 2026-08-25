@@ -6,6 +6,13 @@
 //   Coinbase Exchange websocket:
 //     https://docs.cdp.coinbase.com/exchange/docs/websocket-overview
 
+template<typename T>
+class Threadsafe_queue
+{
+    
+}
+
+
 int main() {
     return 0;
 }
