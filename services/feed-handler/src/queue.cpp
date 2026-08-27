@@ -25,6 +25,17 @@ public:
         value=std::move(data_queue.front());
         data_queue.pop();
     }
+    std::shared_ptr<T> wait_and_pop()
+    {
+        std::unique_lock<std::mutex> lk(mut);
+        data_cond.wait(lk,[this]{return !data_queue.empty();});
+        std::shared_ptr<T> res(
+            std::make_shared<T(std::move(data_queue.front())));
+        data_queue.pop();
+        return res;    
+    }
+    
+
     
 
 
