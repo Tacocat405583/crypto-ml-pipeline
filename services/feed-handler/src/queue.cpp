@@ -34,7 +34,13 @@ public:
         data_queue.pop();
         return res;    
     }
-    
+    bool try_and_pop(T& value){
+        std::lock_gaurd<std::mutex> lk(mut);
+        if(data_queue.is_empty()){return false;}
+        value=std::move(data_queue.front());
+        data_queue.pop();
+        return true;
+    }
 
     
 
