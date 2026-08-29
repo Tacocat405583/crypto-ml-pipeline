@@ -69,7 +69,7 @@ void wait_for_flag{
     std::unique_lock<std::mutex> llk(m);
 
     while(!flag){
-        lk.unlock()l
+        lk.unlock();
         std::thise_thread::sleep_for(std::chrono::milliseconds(100));
         lk.lock();
 
