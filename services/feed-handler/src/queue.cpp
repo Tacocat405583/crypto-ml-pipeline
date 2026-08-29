@@ -1,6 +1,10 @@
 #include <exception>
-#include  <mutex>
-#include <algorithms>
+#include <mutex>
+#include <queue>
+#include <condition_variable>
+#include <memory>
+#include <chrono>
+#include <thread>
 
 
 template<typename T>
@@ -14,7 +18,7 @@ public:
     threadsafe_queue()
     {}
     void push(T new_value){
-        std::lock_gaurd<std::mutex> lk(mut);
+        std::lock_guard<std::mutex> lk(mut);
         data_queue.push(std::move(new_value));
         data_cond.notify_one();
     }
@@ -30,20 +34,20 @@ public:
         std::unique_lock<std::mutex> lk(mut);
         data_cond.wait(lk,[this]{return !data_queue.empty();});
         std::shared_ptr<T> res(
-            std::make_shared<T(std::move(data_queue.front())));
+            std::make_shared<T>(std::move(data_queue.front())));
         data_queue.pop();
         return res;    
     }
     bool try_pop(T& value){
-        std::lock_gaurd<std::mutex> lk(mut);
-        if(data_queue.is_empty()){return false;}
+        std::lock_guard<std::mutex> lk(mut);
+        if(data_queue.empty()){return false;}
         value=std::move(data_queue.front());
         data_queue.pop();
         return true;
     }
     std::shared_ptr<T> try_pop()
     {
-        std::lock_gaurd<std::mutex> lk(mut);
+        std::lock_guard<std::mutex> lk(mut);
         if(data_queue.empty())
             return std::shared_ptr<T>();
         std::shared_ptr<T> res(
@@ -54,8 +58,8 @@ public:
 
     bool empty() const
     {
-        std::lock_gaurd<std::mutex> lk(mut);
-        return data_queue.is_empty()l
+        std::lock_guard<std::mutex> lk(mut);
+        return data_queue.empty();
     }
     
 
@@ -65,12 +69,16 @@ public:
 
 
 //wait for flag
-void wait_for_flag{
-    std::unique_lock<std::mutex> llk(m);
+std::mutex m;
+bool flag;
+
+void wait_for_flag()
+{
+    std::unique_lock<std::mutex> lk(m);
 
     while(!flag){
         lk.unlock();
-        std::thise_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         lk.lock();
 
     }
