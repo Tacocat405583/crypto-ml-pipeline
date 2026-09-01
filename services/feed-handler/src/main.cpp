@@ -6,11 +6,20 @@
 //   Coinbase Exchange websocket:
 //     https://docs.cdp.coinbase.com/exchange/docs/websocket-overview
 
-template<typename T>
-class Threadsafe_queue
-{
-    
-}
+// Core Beast & Asio Sockets
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/asio/ip/tcp.hpp>
+
+// REQUIRED FOR WSS:// (SSL/TLS Encryption)
+#include <boost/beast/ssl.hpp>
+#include <boost/asio/ssl.hpp>
+
+// Standard Utilities
+#include <iostream>
+#include <string>
+#include <memory>
+
 
 
 int main() {
