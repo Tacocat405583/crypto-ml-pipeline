@@ -21,6 +21,16 @@
 #include <memory>
 
 
+//straight from 
+//https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/quick_start/websocket_client.html
+namespace beast = boost::beast;         // from <boost/beast.hpp>
+namespace http = beast::http;           // from <boost/beast/http.hpp>
+namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
+namespace net = boost::asio;            // from <boost/asio.hpp>
+using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
+
+
+
 
 int main() {
     return 0;
