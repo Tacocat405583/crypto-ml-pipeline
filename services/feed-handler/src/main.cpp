@@ -1,99 +1,97 @@
-// Reference:
-//   Beast sync-ssl websocket client (start here):
-//     https://github.com/boostorg/beast/tree/develop/example/websocket/client/sync-ssl
-//   Beast docs:
-//     https://www.boost.org/doc/libs/release/libs/beast/doc/html/
-//   Coinbase Exchange websocket:
-//     https://docs.cdp.coinbase.com/exchange/docs/websocket-overview
+// Coinbase Exchange websocket feed -- step 1: connect, subscribe, print frames.
+//
+//   Beast sync-ssl example: https://github.com/boostorg/beast/tree/develop/example/websocket/client/sync-ssl
+//   Beast docs:            https://www.boost.org/doc/libs/release/libs/beast/doc/html/
+//   Coinbase websocket:    https://docs.cdp.coinbase.com/exchange/websocket-feed/overview
 
-// Core Beast & Asio Sockets
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
-#include <boost/asio/ip/tcp.hpp>
-
-// REQUIRED FOR WSS:// (SSL/TLS Encryption)
+#include <boost/beast/websocket/ssl.hpp>
 #include <boost/beast/ssl.hpp>
+#include <boost/asio/connect.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 
-// Standard Utilities
 #include <iostream>
 #include <string>
-#include <memory>
 
+namespace beast     = boost::beast;
+namespace http      = beast::http;
+namespace websocket = beast::websocket;
+namespace net       = boost::asio;
+namespace ssl       = boost::asio::ssl;
+using tcp           = boost::asio::ip::tcp;
 
-//straight from 
-//https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/quick_start/websocket_client.html
-namespace beast = boost::beast;         // from <boost/beast.hpp>
-namespace http = beast::http;           // from <boost/beast/http.hpp>
-namespace websocket = beast::websocket; // from <boost/beast/websocket.hpp>
-namespace net = boost::asio;            // from <boost/asio.hpp>
-using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
-
-
-// Sends a WebSocket message and prints the response
-int main(int argc, char** argv)
+int main()
 {
+    const std::string host = "ws-feed.exchange.coinbase.com";
+    const std::string port = "443";
+    const std::string subscribe =
+        R"({"type":"subscribe","product_ids":["BTC-USD"],"channels":["ticker"]})";
+
     try
     {
-        // Check command line arguments.
-        if(argc != 4)
-        {
-            std::cerr <<
-                "Usage: websocket-client-sync <host> <port> <text>\n" <<
-                "Example:\n" <<
-                "    websocket-client-sync echo.websocket.org 80 \"Hello, world!\"\n";
-            return EXIT_FAILURE;
-        }
-        std::string host = argv[1];
-        auto const  port = argv[2];
-        auto const  text = argv[3];
-
-        // The io_context is required for all I/O
+        // ioc = the I/O engine every Asio object needs.
+        // ctx = TLS settings (protocol version, which certs to trust).
         net::io_context ioc;
+        ssl::context    ctx{ssl::context::tlsv12_client};
 
-        // These objects perform our I/O
+        // Trust the system CA bundle (MSYS2: pacman -S mingw-w64-x86_64-ca-certificates,
+        // which populates /mingw64/etc/ssl/certs). OpenSSL also honours the
+        // SSL_CERT_FILE / SSL_CERT_DIR env vars if you need to override this.
+        ctx.set_default_verify_paths();
+        ctx.set_verify_mode(ssl::verify_peer);
+
         tcp::resolver resolver{ioc};
-        websocket::stream<tcp::socket> ws{ioc};
+        websocket::stream<beast::ssl_stream<beast::tcp_stream>> ws{ioc, ctx};
 
-        // Look up the domain name
+        // 1. hostname -> list of IP endpoints
         auto const results = resolver.resolve(host, port);
 
-        // Make the connection on the IP address we get from a lookup
-        auto ep = net::connect(ws.next_layer(), results);
+        // 2. TCP connect. get_lowest_layer() reaches past the websocket and TLS
+        //    layers down to the raw socket underneath.
+        auto ep = beast::get_lowest_layer(ws).connect(results);
 
-        // Update the host_ string. This will provide the value of the
-        // Host HTTP header during the WebSocket handshake.
-        // See https://tools.ietf.org/html/rfc7230#section-5.4
-        host += ':' + std::to_string(ep.port());
+        // 3. SNI -- tells the server which hostname we want a certificate for.
+        //    Without this the TLS handshake fails with an unhelpful error.
+        if(!SSL_set_tlsext_host_name(ws.next_layer().native_handle(), host.c_str()))
+            throw beast::system_error{
+                static_cast<int>(::ERR_get_error()), net::error::get_ssl_category()};
 
-        // Set a decorator to change the User-Agent of the handshake
+        // Check the certificate actually belongs to this hostname -- verify_peer
+        // alone only proves the cert chains to a trusted CA, not that it is *theirs*.
+        ws.next_layer().set_verify_callback(ssl::host_name_verification(host));
+
+        // 4. TLS handshake (on the ssl layer, reached via next_layer())
+        ws.next_layer().handshake(ssl::stream_base::client);
+
+        // The Host header must carry the port we actually connected on.
+        const std::string host_hdr = host + ':' + std::to_string(ep.port());
+
         ws.set_option(websocket::stream_base::decorator(
-            [](websocket::request_type& req)
-            {
-                req.set(http::field::user_agent,
-                    std::string(BOOST_BEAST_VERSION_STRING) +
-                        " websocket-client-coro");
+            [](websocket::request_type& req) {
+                req.set(http::field::user_agent, "crypto-ml-pipeline-feed-handler");
             }));
 
-        // Perform the websocket handshake
-        ws.handshake(host, "/");
+        // 5. Websocket handshake (the HTTP Upgrade)
+        ws.handshake(host_hdr, "/");
 
-        // Send the message
-        ws.write(net::buffer(std::string(text)));
+        // Coinbase sends and expects text frames; Beast defaults to binary.
+        ws.text(true);
 
-        // This buffer will hold the incoming message
+        // Must arrive within 5s of connecting or the server drops us.
+        ws.write(net::buffer(subscribe));
+
+        // 6. Read loop. First frame back is the "subscriptions" ack, then ticks.
         beast::flat_buffer buffer;
+        for(int i = 0; i < 5; ++i)
+        {
+            buffer.clear();
+            ws.read(buffer);
+            std::cout << beast::make_printable(buffer.data()) << "\n\n";
+        }
 
-        // Read a message into our buffer
-        ws.read(buffer);
-
-        // Close the WebSocket connection
         ws.close(websocket::close_code::normal);
-
-        // If we get here then the connection is closed gracefully
-
-        // The make_printable() function helps print a ConstBufferSequence
-        std::cout << beast::make_printable(buffer.data()) << std::endl;
     }
     catch(std::exception const& e)
     {
