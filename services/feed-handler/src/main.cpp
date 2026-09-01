@@ -15,11 +15,18 @@
 #include <iostream>
 #include <string>
 
+#include <atomic>
+
+//Json
+#include <nlohmann/json.hpp>
+
 namespace beast     = boost::beast;
 namespace http      = beast::http;
 namespace websocket = beast::websocket;
 namespace net       = boost::asio;
 namespace ssl       = boost::asio::ssl;
+using json = nlohmann::json;
+
 using tcp           = boost::asio::ip::tcp;
 
 int main()
@@ -82,13 +89,25 @@ int main()
         // Must arrive within 5s of connecting or the server drops us.
         ws.write(net::buffer(subscribe));
 
-        // 6. Read loop. First frame back is the "subscriptions" ack, then ticks.
+        // 6. Read loop. Ctrl+C to stop.
         beast::flat_buffer buffer;
-        for(int i = 0; i < 5; ++i)
+        while (true)
         {
+            // read FIRST -- the buffer is empty until this fills it
             buffer.clear();
             ws.read(buffer);
-            std::cout << beast::make_printable(buffer.data()) << "\n\n";
+
+            std::string s = beast::buffers_to_string(buffer.data());
+            json j = json::parse(s);
+
+            // skip the subscriptions ack, errors, and anything we don't handle
+            if (j["type"] != "ticker")
+                continue;
+
+            long long seq   = j["sequence"].get<long long>();
+            double    price = std::stod(j["price"].get<std::string>());
+
+            std::cout << seq << "  " << price << "\n";
         }
 
         ws.close(websocket::close_code::normal);
