@@ -23,7 +23,10 @@ add_executable(feed_handler
 
 target_include_directories(feed_handler PRIVATE include)
 
+find_package(Threads REQUIRED)
+
 target_link_libraries(feed_handler PRIVATE
+    Threads::Threads
     Boost::headers
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -51,7 +54,6 @@ target_compile_options(feed_handler PRIVATE -Wall -Wextra)
 # no OpenSSL. EXCLUDE_FROM_ALL keeps it out of the normal feed_handler build.
 #   cmake --build <dir> --target ch2_notes
 # ---------------------------------------------------------------------------
-find_package(Threads REQUIRED)
 add_executable(ch2_notes EXCLUDE_FROM_ALL src/testing.cpp)
 target_link_libraries(ch2_notes PRIVATE Threads::Threads)
 target_compile_options(ch2_notes PRIVATE -Wall -Wextra)
