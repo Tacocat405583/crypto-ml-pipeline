@@ -40,3 +40,13 @@ if(ENABLE_TSAN)
 endif()
 
 target_compile_options(feed_handler PRIVATE -Wall -Wextra)
+
+# ---------------------------------------------------------------------------
+# Chapter-2 concurrency notes / lab (src/testing.cpp). Standalone: no Boost,
+# no OpenSSL. EXCLUDE_FROM_ALL keeps it out of the normal feed_handler build.
+#   cmake --build <dir> --target ch2_notes
+# ---------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+add_executable(ch2_notes EXCLUDE_FROM_ALL src/testing.cpp)
+target_link_libraries(ch2_notes PRIVATE Threads::Threads)
+target_compile_options(ch2_notes PRIVATE -Wall -Wextra)
