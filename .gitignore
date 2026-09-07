@@ -43,3 +43,6 @@ Thumbs.db
 # C++ build output
 build/
 services/**/build/
+
+# Compiled binaries
+*.exe
