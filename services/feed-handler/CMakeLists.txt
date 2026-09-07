@@ -16,7 +16,12 @@ find_package(Boost REQUIRED)
 find_package(OpenSSL REQUIRED)          # wss:// -- Coinbase requires TLS
 find_package(nlohmann_json REQUIRED)
 
-add_executable(feed_handler src/main.cpp)
+add_executable(feed_handler
+    src/main.cpp
+    src/tick_writer.cpp
+)
+
+target_include_directories(feed_handler PRIVATE include)
 
 target_link_libraries(feed_handler PRIVATE
     Boost::headers
