@@ -16,7 +16,7 @@ dependencies = [
     "websockets",
     "confluent-kafka",
     "requests",
-
+    "duckdb>=1.5.5",
 ]
 
 [dependency-groups]
