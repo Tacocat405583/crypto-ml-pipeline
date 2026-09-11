@@ -65,9 +65,16 @@ def utc(t: dt.datetime | None) -> dt.datetime | None:
     return t.astimezone(dt.timezone.utc).replace(tzinfo=None)
 
 
+def iso(t: dt.datetime) -> str:
+    # Parquet written by pandas stores tz-aware times, which DuckDB returns in
+    # the session time zone; normalise before stamping the Z.
+    return utc(t).isoformat() + "Z"
+
+
 def create_app(bars_dir: Path = ROOT / "data" / "warehouse" / "bars",
                ticks_dir: Path = ROOT / "data" / "lake" / "ticks",
-               rate: float = 10.0, burst: int = 20) -> FastAPI:
+               rate: float = 10.0, burst: int = 20,
+               forecasts_dir: Path = ROOT / "data" / "warehouse" / "forecasts") -> FastAPI:
     app = FastAPI(title="crypto-ml-pipeline", version="1.0",
                   description="Hourly OHLCV bars and trade ticks from the Coinbase feed.")
     limiter = RateLimiter(rate, burst)
@@ -93,7 +100,7 @@ def create_app(bars_dir: Path = ROOT / "data" / "warehouse" / "bars",
         try:
             cur = con.execute(sql, params)
             cols = [d[0] for d in cur.description]
-            return [{c: (v.isoformat() + "Z" if isinstance(v, dt.datetime) else v) for c, v in zip(cols, r)}
+            return [{c: (iso(v) if isinstance(v, dt.datetime) else v) for c, v in zip(cols, r)}
                     for r in cur.fetchall()]
         finally:
             con.close()
@@ -166,6 +173,29 @@ def create_app(bars_dir: Path = ROOT / "data" / "warehouse" / "bars",
                           "first_times": [df.loc[r, "time"].isoformat() + "Z" for r in f.rows[:10]]}
                          for f in findings],
         }
+
+    @app.get("/forecast")
+    def forecast(symbol: str = Query(..., pattern=SYMBOL)):
+        """Next-hour volatility forecast, with the walk-forward record that backs it."""
+        latest, record = forecasts_dir / "vol_next.parquet", forecasts_dir / "vol_walkforward.parquet"
+        if not latest.exists():
+            raise HTTPException(503, "no forecast yet; run notebooks/volatility.py")
+        found = rows(f"SELECT as_of, for_hour, vol_1h_forecast, vol_1h_last FROM read_parquet('{latest.as_posix()}') "
+                     "WHERE symbol = ?", [symbol])
+        if not found:
+            raise HTTPException(404, f"no forecast for {symbol}")
+        body = {"symbol": symbol, "target": "next-hour Parkinson volatility", "model": "gbm", **found[0]}
+        if record.exists():
+            (wf,) = rows(f"""SELECT count(*) AS hours, min(time) AS test_start, max(time) AS test_end,
+                                    avg(abs(gbm - target)) AS mae_model,
+                                    avg(abs(persistence - target)) AS mae_persistence,
+                                    avg(abs(mean_24h - target)) AS mae_mean_24h
+                             FROM read_parquet('{record.as_posix()}') WHERE symbol = ?""", [symbol])
+            if wf["hours"]:
+                wf["vs_persistence"] = 1 - wf["mae_model"] / wf["mae_persistence"]
+                wf["vs_mean_24h"] = 1 - wf["mae_model"] / wf["mae_mean_24h"]
+                body["walk_forward"] = wf
+        return body
 
     return app
 

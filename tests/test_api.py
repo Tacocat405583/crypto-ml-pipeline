@@ -113,3 +113,27 @@ def test_rate_limit_answers_429_with_retry_after(zones):
     codes = [c.get("/health").status_code for _ in range(4)]
     assert codes == [200, 200, 200, 429]
     assert int(c.get("/health").headers["Retry-After"]) >= 1
+
+
+def test_forecast_serves_the_latest_and_its_walk_forward_record(zones, tmp_path):
+    import pandas as pd
+    fc = tmp_path / "forecasts"
+    fc.mkdir()
+    idx = pd.date_range("2026-08-01", periods=4, freq="h", tz="UTC", name="time")   # tz-aware, as pandas writes it
+    pd.DataFrame({"target": [1.0, 2.0, 3.0, 4.0], "persistence": [2.0, 2.0, 2.0, 2.0],
+                  "mean_24h": [2.5] * 4, "gbm": [1.5, 2.0, 2.5, 3.5], "symbol": "BTC-USD"},
+                 index=idx).to_parquet(fc / "vol_walkforward.parquet")
+    pd.DataFrame({"as_of": idx[-1:], "for_hour": idx[-1:] + pd.Timedelta(hours=1),
+                  "vol_1h_forecast": [0.0017], "vol_1h_last": [0.0007], "symbol": "BTC-USD"}
+                 ).to_parquet(fc / "vol_next.parquet")
+    body = TestClient(api.create_app(*zones, forecasts_dir=fc)).get("/forecast", params={"symbol": "BTC-USD"}).json()
+    assert body["for_hour"] == "2026-08-01T04:00:00Z"            # UTC, not the session zone
+    wf = body["walk_forward"]
+    # |gbm - target| = .5, 0, .5, .5 ; |persistence - target| = 1, 0, 1, 2
+    assert wf["mae_model"] == pytest.approx(0.375) and wf["mae_persistence"] == pytest.approx(1.0)
+    assert wf["vs_persistence"] == pytest.approx(0.625)
+
+
+def test_forecast_before_any_model_run_is_a_503(zones, tmp_path):
+    c = TestClient(api.create_app(*zones, forecasts_dir=tmp_path / "none"))
+    assert c.get("/forecast", params={"symbol": "BTC-USD"}).status_code == 503
