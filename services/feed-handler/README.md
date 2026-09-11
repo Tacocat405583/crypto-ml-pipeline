@@ -131,6 +131,33 @@ for i in $(seq 1 200); do cat frames.jsonl >> bench.jsonl; done
 python bench_python.py bench.jsonl
 ```
 
+## Load tests
+
+`tests/test_feed_handler.py` drives the built binary as a black box: synthetic Coinbase
+ticker frames in, the written `ticks.jsonl` read back and counted. Every run gets its own
+`--out` under a temp directory. `uv run pytest tests/test_feed_handler.py` — six tests,
+about 11 s.
+
+```
+block, 16 slots, 4 parsers    written 200,000   dropped       0   of 200,000
+drop,  16 slots, 1 parser     written  13,615   dropped 186,385   of 200,000   <- control
+Ctrl+Break at 1.5 s           read 29,793 -> parsed 29,792 -> written 29,792, dropped 0, exit 0
+--pace 100                    99.89x achieved: 300 s of market in 3.003 s
+```
+
+**The zero-loss result only means something next to the control.** A 16-slot queue against
+an unpaced 200k-frame replay is almost pure backpressure: under `--overflow drop` the same
+load sheds 93% of frames. Under `--overflow block` it sheds none, and every trade id comes
+out once, in feed order.
+
+**Shutdown loses nothing that was accepted.** The replay is paced to take ~10 s and
+interrupted at 1.5 s. Every frame the source had read — minus the subscriptions ack, which
+is counted as read and never becomes a tick — was parsed and written, the process exited 0,
+and every file ends on a complete record.
+
+The suite also checks that 1-parser mutex, 4-parser mutex and SPSC runs write identical
+output, which was the manual check in the design note below.
+
 ## Design notes
 
 **The queue is bounded, and the overflow policy is explicit.** Unbounded is not a policy: if
@@ -149,7 +176,7 @@ holds anything that arrives early and only emits the contiguous run from the nex
 ticket. Frames that produce no tick (the subscribe ack, a malformed body) still get a ticket
 with an empty payload, or the writer would wait forever on a record that never comes.
 Verified: 1-parser mutex, 4-parser mutex and SPSC all produce byte-identical output in feed
-order.
+order — now an automated test, see Load tests.
 
 **`sequence` gaps are not data loss.** On the `ticker` channel `sequence` counts every message
 the product's feed generates, and ticker is a filtered view of it — 878 of 878 consecutive
