@@ -6,8 +6,9 @@
 --
 -- GROUP BY 1, 2 rather than names, on purpose. The input already has a column
 -- called `time` (Coinbase's exchange clock) and, from the folder names, one
--- called `symbol`. GROUP BY time would bind to the input column and return one
--- row per trade. An ordinal always means "output column N".
+-- called `symbol`. GROUP BY time, symbol binds to those input columns, not the
+-- outputs below, and DuckDB rejects the query because recv_time ends up neither
+-- grouped nor aggregated. An ordinal always means "output column N".
 --
 -- recv_time is our clock, written in UTC by the feed handler, and it is the
 -- same clock the writer partitions on, so every tick in hour=07/ lands in the
