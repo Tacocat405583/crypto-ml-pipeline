@@ -129,3 +129,14 @@ def test_missing_column_is_a_schema_error():
 def test_anomalies_are_warnings_and_everything_else_is_an_error():
     kinds = {f.kind: f.is_error for f in q.check_bars(_set(clean_bars(), 50, volume=-1.0, high=1e9))}
     assert kinds == {"range": True, "anomaly": False}
+
+
+def test_benchmark_harness_credits_nothing_for_a_no_op():
+    # The benchmark's recall is only meaningful if an injection that changes
+    # nothing is never scored as caught.
+    import quality_benchmark as b
+    rng = np.random.default_rng(0)
+    noop = {"noop": lambda df, k, rng: (df.copy(), k)}
+    for clean, checker in [(clean_ticks(), q.check_ticks), (clean_bars(), q.check_bars)]:
+        _, res = b.run_table(clean, checker, noop, 50, rng)
+        assert res["noop"][1] == 0
