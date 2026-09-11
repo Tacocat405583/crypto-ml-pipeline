@@ -1,0 +1,10 @@
+# Build contexts get the source, never local state or Windows build output.
+.git
+.venv
+data
+logs
+infra
+MDFiles
+**/build
+**/__pycache__
+**/*.exe

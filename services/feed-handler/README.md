@@ -158,6 +158,34 @@ and every file ends on a complete record.
 The suite also checks that 1-parser mutex, 4-parser mutex and SPSC runs write identical
 output, which was the manual check in the design note below.
 
+## ThreadSanitizer
+
+MinGW ships no TSan, so the race-detector run is a Linux container that builds with
+`-DENABLE_TSAN=ON` and runs the same load tests:
+
+```sh
+docker build -f services/feed-handler/Dockerfile.tsan -t feed-handler-tsan .   # from the repo root
+docker run --rm feed-handler-tsan
+```
+
+```
+canary: planted race reported (exit 66) -- the sanitizer is live
+6 passed in 25.63s
+```
+
+TSan halts on its first report with exit code 66, which fails whichever test launched the
+binary, so a green run means no race was observed. **A quiet sanitizer is only evidence if
+it would have spoken**, so `tsan/canary.cpp` — two threads incrementing a plain `int` — runs
+first, and the run is rejected unless TSan reports it.
+
+What it covers: every thread handoff — source to queue (mutex or SPSC ring), parser pool,
+reorder, writer — under 4-parser backpressure, the ring, and a Ctrl+C mid-stream drain.
+What it does not: the live socket read, because the tests drive the pipeline through
+replay. That read is single-threaded Beast synchronous I/O on the source thread, feeding
+the same queue. GCC's `-Wtsan` note about `atomic_thread_fence` comes from Boost.Asio's
+internal `std_fenced_block`, on that same live path; this code uses no fences — the ring
+synchronises with acquire/release on the indices themselves, which TSan models.
+
 ## Design notes
 
 **The queue is bounded, and the overflow policy is explicit.** Unbounded is not a policy: if
@@ -190,9 +218,6 @@ and this is the synchronous client, so it is `SO_RCVTIMEO` on the native handle.
 
 ## Not done
 
-- **ThreadSanitizer has never run.** MinGW does not ship it. `-DENABLE_TSAN=ON` is wired for
-  a clang/gcc toolchain that has it (WSL, Linux CI). The parser pool is the first real
-  concurrency in this repo and it has not been checked by a race detector.
 - **72-hour soak.** Reconnect with backoff and the socket timeout are in; the longest run so
   far is minutes.
 - **Ingest latency needs a clock check.** A live sample gave p50 39 ms with a minimum of

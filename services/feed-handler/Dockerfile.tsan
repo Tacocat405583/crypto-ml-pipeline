@@ -1,0 +1,29 @@
+# ThreadSanitizer build of the feed handler, running its load tests.
+#
+# MinGW ships no TSan, so the race-detector run happens in Linux. From the repo root:
+#   docker build -f services/feed-handler/Dockerfile.tsan -t feed-handler-tsan .
+#   docker run --rm feed-handler-tsan
+# TSan is set to halt on the first report with exit code 66, which fails the test
+# that launched the binary -- so a green run means no race was observed. A planted
+# race (tsan/canary.cpp) runs first and must be caught, or the run is rejected.
+#
+# gcc:14 rather than ubuntu: same compiler major as the MinGW build, and it ships
+# ca-certificates, so apt can use HTTPS mirrors on networks that refuse port 80.
+FROM gcc:14
+
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        cmake libboost-dev libssl-dev nlohmann-json3-dev python3 python3-pytest \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY services/feed-handler services/feed-handler
+COPY tests/test_feed_handler.py tests/
+
+RUN cmake -S services/feed-handler -B services/feed-handler/build \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_TSAN=ON \
+    && cmake --build services/feed-handler/build --target feed_handler -j \
+    && g++ -std=c++20 -fsanitize=thread -O1 -g services/feed-handler/tsan/canary.cpp -o canary
+
+ENV TSAN_OPTIONS="halt_on_error=1 exitcode=66 second_deadlock_stack=1"
+CMD ["sh", "services/feed-handler/tsan/run.sh"]
