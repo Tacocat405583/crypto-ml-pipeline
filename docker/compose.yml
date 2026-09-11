@@ -1,0 +1,25 @@
+# The streaming layer's broker. Redpanda: Kafka's protocol, one binary, no ZooKeeper.
+#
+#   docker compose -f docker/compose.yml up -d
+#   uv run python streaming/producer.py --pace 100
+#   uv run python streaming/consumer.py --exit-when-idle 5
+#
+# Honest scale note (GoalState Phase 4): one symbol at ~10 ticks/sec does not need
+# a broker. It is here for the streaming semantics -- ordering per key, offsets,
+# restart behaviour -- not because throughput demanded it.
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"]
+      interval: 5s
+      retries: 12
