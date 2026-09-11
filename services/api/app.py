@@ -95,8 +95,11 @@ def create_app(bars_dir: Path = ROOT / "data" / "warehouse" / "bars",
 
     def rows(sql: str, params: list) -> list[dict]:
         # One in-memory connection per request: a DuckDB connection is not safe
-        # to share across the threads FastAPI runs sync endpoints on.
+        # to share across the threads FastAPI runs sync endpoints on. Pinned to
+        # UTC, so comparing a tz-aware column with a plain parameter can't pick
+        # up the machine's zone.
         con = duckdb.connect()
+        con.execute("SET TimeZone = 'UTC'")
         try:
             cur = con.execute(sql, params)
             cols = [d[0] for d in cur.description]
@@ -112,10 +115,12 @@ def create_app(bars_dir: Path = ROOT / "data" / "warehouse" / "bars",
 
     @app.get("/health")
     def health():
-        bar_files = list(bars_dir.rglob("*.parquet"))
-        latest = rows(f"SELECT max(time) AS t FROM {source(bars_dir, 'bars')}", [])[0]["t"] if bar_files else None
-        return {"status": "ok" if bar_files else "degraded", "latest_bar": latest,
-                "tick_hours_published": len(list(ticks_dir.rglob("*.parquet")))}
+        bar_files, tick_files = list(bars_dir.rglob("*.parquet")), list(ticks_dir.rglob("*.parquet"))
+        latest_bar = rows(f"SELECT max(time) AS t FROM {source(bars_dir, 'bars')}", [])[0]["t"] if bar_files else None
+        latest_tick = (rows(f"SELECT max(recv_time) AS t FROM {source(ticks_dir, 'ticks')}", [])[0]["t"]
+                       if tick_files else None)
+        return {"status": "ok" if bar_files else "degraded", "latest_bar": latest_bar,
+                "latest_tick": latest_tick, "tick_hours_published": len(tick_files)}
 
     @app.get("/symbols")
     def symbols():
@@ -196,6 +201,25 @@ def create_app(bars_dir: Path = ROOT / "data" / "warehouse" / "bars",
                 wf["vs_mean_24h"] = 1 - wf["mae_model"] / wf["mae_mean_24h"]
                 body["walk_forward"] = wf
         return body
+
+    @app.get("/forecast/history")
+    def forecast_history(symbol: str = Query(..., pattern=SYMBOL),
+                         start: dt.datetime | None = Query(None, description="inclusive, UTC"),
+                         end: dt.datetime | None = Query(None, description="exclusive, UTC"),
+                         limit: int = Query(500, ge=1, le=1000),
+                         cursor: dt.datetime | None = Query(None, description="next_cursor from the previous page")):
+        """Every walk-forward test hour: what happened, what the model said, and the baselines."""
+        record = forecasts_dir / "vol_walkforward.parquet"
+        if not record.exists():
+            raise HTTPException(503, "no walk-forward record yet; run notebooks/volatility.py")
+        start, end, cursor = utc(start), utc(end), utc(cursor)
+        data = rows(f"""SELECT time, target AS actual, gbm AS forecast, persistence, mean_24h
+                        FROM read_parquet('{record.as_posix()}')
+                        WHERE symbol = ? AND (?::TIMESTAMP IS NULL OR time >= ?)
+                          AND (?::TIMESTAMP IS NULL OR time < ?) AND (?::TIMESTAMP IS NULL OR time > ?)
+                        ORDER BY time LIMIT ?""",
+                    [symbol, start, start, end, end, cursor, cursor, limit + 1])
+        return {"symbol": symbol, **page(data, limit, "time")}
 
     return app
 

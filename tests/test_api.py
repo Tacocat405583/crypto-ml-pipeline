@@ -115,7 +115,8 @@ def test_rate_limit_answers_429_with_retry_after(zones):
     assert int(c.get("/health").headers["Retry-After"]) >= 1
 
 
-def test_forecast_serves_the_latest_and_its_walk_forward_record(zones, tmp_path):
+@pytest.fixture
+def forecasts(tmp_path):
     import pandas as pd
     fc = tmp_path / "forecasts"
     fc.mkdir()
@@ -126,7 +127,11 @@ def test_forecast_serves_the_latest_and_its_walk_forward_record(zones, tmp_path)
     pd.DataFrame({"as_of": idx[-1:], "for_hour": idx[-1:] + pd.Timedelta(hours=1),
                   "vol_1h_forecast": [0.0017], "vol_1h_last": [0.0007], "symbol": "BTC-USD"}
                  ).to_parquet(fc / "vol_next.parquet")
-    body = TestClient(api.create_app(*zones, forecasts_dir=fc)).get("/forecast", params={"symbol": "BTC-USD"}).json()
+    return fc
+
+
+def test_forecast_serves_the_latest_and_its_walk_forward_record(zones, forecasts):
+    body = TestClient(api.create_app(*zones, forecasts_dir=forecasts)).get("/forecast", params={"symbol": "BTC-USD"}).json()
     assert body["for_hour"] == "2026-08-01T04:00:00Z"            # UTC, not the session zone
     wf = body["walk_forward"]
     # |gbm - target| = .5, 0, .5, .5 ; |persistence - target| = 1, 0, 1, 2
@@ -137,3 +142,19 @@ def test_forecast_serves_the_latest_and_its_walk_forward_record(zones, tmp_path)
 def test_forecast_before_any_model_run_is_a_503(zones, tmp_path):
     c = TestClient(api.create_app(*zones, forecasts_dir=tmp_path / "none"))
     assert c.get("/forecast", params={"symbol": "BTC-USD"}).status_code == 503
+
+
+def test_forecast_history_pages_in_utc(zones, forecasts):
+    c = TestClient(api.create_app(*zones, forecasts_dir=forecasts))
+    rows, pages = walk(c, "/forecast/history", symbol="BTC-USD", limit=3)
+    assert pages == 2 and [r["time"] for r in rows] == [f"2026-08-01T0{h}:00:00Z" for h in range(4)]
+    assert rows[1] == {"time": "2026-08-01T01:00:00Z", "actual": 2.0, "forecast": 2.0,
+                       "persistence": 2.0, "mean_24h": 2.5}
+    # The column is tz-aware and the parameter is not: this must still mean 02:00 UTC.
+    later = c.get("/forecast/history", params={"symbol": "BTC-USD", "start": "2026-08-01T02:00:00Z"}).json()
+    assert [r["time"][11:13] for r in later["data"]] == ["02", "03"]
+
+
+def test_health_reports_the_latest_tick(client):
+    # clean_ticks: 200 ticks two seconds apart from 07:00:00, so the last is 07:06:38
+    assert client.get("/health").json()["latest_tick"] == "2026-09-07T07:06:38Z"
