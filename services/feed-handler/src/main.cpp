@@ -678,6 +678,12 @@ int main(int argc, char** argv)
 {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+#ifdef SIGBREAK
+    // Windows only. A harness can't deliver Ctrl+C to one child process, only
+    // Ctrl+Break to its process group -- and unhandled, that kills the process
+    // without the drain. This is what makes graceful shutdown testable.
+    std::signal(SIGBREAK, on_signal);
+#endif
 
     try
     {
