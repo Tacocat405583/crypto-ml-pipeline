@@ -37,9 +37,14 @@ nowhere near the cause.
 ```sh
 ./build/feed_handler.exe                              # live, writes data/raw/ticks
 ./build/feed_handler.exe --record frames.jsonl        # live, also keep the raw frames
-./build/feed_handler.exe --replay frames.jsonl        # feed a recording back through
+./build/feed_handler.exe --replay frames.jsonl --out scratch/replay              # feed a recording back through
+./build/feed_handler.exe --replay frames.jsonl --out scratch/replay --pace 100   # ...at 100x market speed
 ./build/feed_handler.exe --bench --replay frames.jsonl --queue spsc
 ```
+
+**Always give a replay its own `--out`.** Replay stamps `recv_time` with the current clock,
+so replaying into the default raw zone writes a fake hour of duplicate trades, and
+`pipeline/sql/tick_bars.sql` will count every one of them.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -51,10 +56,18 @@ nowhere near the cause.
 | `--record FILE` | — | append raw frames for later replay |
 | `--replay FILE` | — | read frames from FILE instead of the network |
 | `--speed N` | `0` | replay pacing in frames/sec; 0 = unpaced |
+| `--pace N` | — | replay at N× the recorded market speed, scheduled from each frame's exchange time |
 | `--bench` | off | replay, skip the disk write, report throughput and latency |
 
 Ctrl+C drains the pipeline in order — source, then parsers, then writer — and flushes
-before exiting.
+before exiting. So does Ctrl+Break, which matters on Windows: a test harness can't send
+Ctrl+C to a single child process, only Ctrl+Break to its process group.
+
+`--pace` prints the pace it actually achieved and its worst-late frame. On the 86-second
+sample: 9.99× when asked for 10×, 98.7× for 100×. Frames are scheduled against absolute
+targets, so the Windows timer's ~15 ms granularity makes single frames late (15–30 ms
+worst case) without the lateness accumulating; the shortfall at 100× is that granularity
+on a replay that only lasts 0.87 s.
 
 ## Output
 
