@@ -20,7 +20,7 @@ clean data -- the real captures and the year of candles, with margin -- and neve
 from the injected errors used to measure them:
 
   price vs quoted book     clean max 0.019%    flag at 0.25%
-  price vs recent median   clean max 0.034%    flag at 0.5%   (within an hour)
+  price vs recent median   clean max 0.034%    flag at 0.5%   (within a session)
   feed silence             clean max 7.7 s     flag at 60 s
   exchange vs our clock    clean max 1.4 s     flag at 60 s
   bar open vs prev close   clean max 0.17%     flag at 1%
@@ -118,7 +118,13 @@ def _frame(con, name: str, df: pd.DataFrame) -> None:
 def check_ticks(df: pd.DataFrame) -> list[Finding]:
     con = duckdb.connect()
     _frame(con, "ticks", df)
-    hour = "PARTITION BY product_id, date_trunc('hour', recv_time) ORDER BY _row"
+    # A session is a run of ticks with no silence over 60 s. Price context resets
+    # at a session boundary -- the price four days later is not a jump -- but a
+    # stall is measured across hour boundaries, because an outage spanning the
+    # top of the hour is exactly the one that matters.
+    sessions = """(SELECT *, sum(brk) OVER (PARTITION BY product_id ORDER BY _row) AS session FROM (
+                     SELECT *, CASE WHEN epoch(recv_time - lag(recv_time) OVER (PARTITION BY product_id ORDER BY _row))
+                                         > 60 THEN 1 ELSE 0 END AS brk FROM ticks))"""
     checks = [
         ("unique_trade_id", "uniqueness", {"product_id", "trade_id"},
          "SELECT _row FROM ticks QUALIFY count(*) OVER (PARTITION BY product_id, trade_id) > 1",
@@ -147,13 +153,15 @@ def check_ticks(df: pd.DataFrame) -> list[Finding]:
          "trade price more than 0.25% from the quoted mid"),
         ("price_jump", "anomaly", {"product_id", "recv_time", "price"},
          f"""SELECT _row FROM (SELECT _row, price,
-                    median(price) OVER ({hour} ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) AS med
-                    FROM ticks WHERE price > 0)
+                    median(price) OVER (PARTITION BY product_id, session ORDER BY _row
+                                        ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) AS med
+                    FROM {sessions} WHERE price > 0)
              WHERE abs(ln(price / med)) > 0.005""",
-         "price more than 0.5% from the median of the previous 20 ticks"),
+         "price more than 0.5% from the median of the previous 20 ticks in its session"),
         ("feed_stall", "anomaly", {"product_id", "recv_time"},
-         f"""SELECT _row FROM (SELECT _row, recv_time, lag(recv_time) OVER ({hour}) AS prev FROM ticks)
-             WHERE epoch(recv_time - prev) > 60""",
+         """SELECT _row FROM (SELECT _row, recv_time,
+                   lag(recv_time) OVER (PARTITION BY product_id ORDER BY _row) AS prev FROM ticks)
+            WHERE epoch(recv_time - prev) > 60""",
          "more than 60 s without a tick"),
     ]
     return _run(con, "ticks", TICK_SCHEMA, checks)
