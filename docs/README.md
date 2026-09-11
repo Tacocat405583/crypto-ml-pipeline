@@ -9,6 +9,17 @@ makes it mean something. A zero-loss result is only evidence if the same load lo
 under a policy that allows it. A quiet race detector is only evidence if it catches a
 planted race.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-dark.png">
+  <img alt="The Streamlit dashboard: latest price, the volatility forecast, data quality and live ticks" src="img/dashboard.png">
+</picture>
+
+*The dashboard (`services/dashboard/`), reading everything through the API. The blue banner is
+its freshness check: the bars end on 2026-08-11, so it names the scripts to re-run.
+These screenshots follow your GitHub theme -- light and dark are both captured from the app.*
+
+## How it fits together
+
 ```
  Coinbase WSS ──▶ feed_handler (C++20) ──▶ data/raw/ticks/…/ticks.jsonl      landing zone
                   source → queue/ring → parser pool → reorder → writer       (crash-safe JSONL)
@@ -46,6 +57,52 @@ planted race.
 | Streaming results survive a consumer crash | streamed bars == batch bars, crash included | The consumer is killed mid-minute and restarted. **Control:** committing the last offset read instead loses 5 of 30 trades in that bar |
 
 `uv run pytest` — 65 tests, about 30 s. The broker tests need `docker compose -f docker/compose.yml up -d`.
+
+## What the dashboard shows
+
+Start the API, then the dashboard, and open http://localhost:8501:
+
+```sh
+uv run uvicorn app:app --app-dir services/api      # terminal 1
+uv run streamlit run services/dashboard/app.py     # terminal 2
+```
+
+**The headline numbers.** Last close, the last hour's volatility, the model's forecast for the
+next hour, and how much lower its error is than the naive guess.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-kpis-dark.png">
+  <img alt="The four headline metrics" src="img/dashboard-kpis.png">
+</picture>
+
+**Hourly close.** BTC-USD price, one point per hour. Hover for exact values; the table under
+it has every bar.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-close-dark.png">
+  <img alt="Hourly close chart" src="img/dashboard-close.png">
+</picture>
+
+**The forecast, checked against reality.** Blue is the volatility that actually happened.
+Orange is the model's forecast, made before the hour. Green is persistence, the naive
+"next hour looks like this one." Orange tracks blue more closely than green does: 21.6% lower
+average error over 1,716 out-of-sample hours.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-volatility-dark.png">
+  <img alt="Volatility forecast against actual and persistence" src="img/dashboard-volatility.png">
+</picture>
+
+**Data quality, and the raw feed.** The quality panel is the gate's own verdict on the bars
+it published, with any finding named. Beside it, the most recent trades as the C++ feed handler
+wrote them -- exchange price, size, side and the quoted book, straight out of the tick lake.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-panels-dark.png">
+  <img alt="Data quality findings and the latest ticks from the feed handler" src="img/dashboard-panels.png">
+</picture>
+
+Both charts have the data one click away as a table, and everything is in UTC.
 
 ## What is where
 
