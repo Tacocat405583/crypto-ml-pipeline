@@ -3,7 +3,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CANDLES_PATH = ROOT / "src" / "tracker" / "candles_1h.jsonl"
+# Hourly OHLCV bars exported by pipeline/build_warehouse.py, one Hive partition
+# per symbol. Run that first; this directory is generated, not committed.
+BARS_DIR = ROOT / "data" / "warehouse" / "bars"
 
 TICKERS = ["BTC-USD"]
 
