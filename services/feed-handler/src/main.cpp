@@ -16,6 +16,8 @@
 //     --record FILE      also append raw frames, for later replay
 //     --replay FILE      read frames from FILE instead of the network
 //     --speed N          replay pacing: 0 = as fast as possible (default 0)
+//     --pace N           replay at N x the recorded market speed, from each
+//                        frame's exchange time (100 = 100x real time)
 //     --bench            replay, discard output, print throughput and latency
 //
 //   Beast sync-ssl example: https://github.com/boostorg/beast/tree/develop/example/websocket/client/sync-ssl
@@ -34,6 +36,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -42,6 +45,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -110,6 +114,9 @@ struct Stats
     std::atomic<uint64_t> dropped{0};      // shed by the overflow policy
     std::atomic<uint64_t> out_of_order{0}; // duplicate or replayed sequence
     std::atomic<uint64_t> sessions{0};     // connections opened
+    std::atomic<int64_t>  replay_span_us{0}; // --pace: exchange time replayed
+    std::atomic<int64_t>  replay_wall_us{0}; // --pace: wall time it took
+    std::atomic<int64_t>  replay_late_us{0}; // --pace: worst frame lateness
 };
 
 
@@ -125,6 +132,7 @@ struct Config
     fs::path record;
     fs::path replay;
     double speed = 0.0;      // 0 = unpaced
+    double pace = 0.0;       // N x recorded market speed; 0 = off
     bool bench = false;
 };
 
@@ -441,6 +449,49 @@ static void run_session(const Config& cfg, RawQ& raw_q, Stats& stats,
 }
 
 
+// Exchange timestamp of a raw frame, in microseconds since the epoch. Found by
+// substring rather than a JSON parse: this runs on the source thread, and
+// parsing is what the pool is for. Coinbase writes "2026-09-07T07:32:03.745460Z";
+// a shorter fraction is scaled up to microseconds. nullopt for frames with no
+// time (the subscription ack) or one this cannot read.
+static std::optional<int64_t> frame_time_us(std::string_view frame)
+{
+    constexpr std::string_view key = "\"time\":\"";
+    const auto at = frame.find(key);
+    if (at == std::string_view::npos)
+        return std::nullopt;
+
+    const std::string_view s = frame.substr(at + key.size());
+    if (s.size() < 20 || s[4] != '-' || s[7] != '-' || s[10] != 'T' || s[13] != ':' || s[16] != ':')
+        return std::nullopt;
+
+    auto num = [&](std::size_t pos, std::size_t len, int& out) {
+        const auto r = std::from_chars(s.data() + pos, s.data() + pos + len, out);
+        return r.ec == std::errc{} && r.ptr == s.data() + pos + len;
+    };
+    int y, mo, d, h, mi, sec;
+    if (!num(0, 4, y) || !num(5, 2, mo) || !num(8, 2, d) ||
+        !num(11, 2, h) || !num(14, 2, mi) || !num(17, 2, sec))
+        return std::nullopt;
+
+    int64_t frac_us = 0;
+    std::size_t i = 19;
+    if (i < s.size() && s[i] == '.')
+    {
+        int64_t scale = 100000;
+        for (++i; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i, scale /= 10)
+            frac_us += (s[i] - '0') * scale;
+    }
+
+    using namespace std::chrono;
+    const year_month_day ymd{year{y}, month{static_cast<unsigned>(mo)}, day{static_cast<unsigned>(d)}};
+    if (!ymd.ok())
+        return std::nullopt;
+    const int64_t epoch_days = sys_days{ymd}.time_since_epoch().count();
+    return ((epoch_days * 24 + h) * 60 + mi) * 60'000'000LL + sec * 1'000'000LL + frac_us;
+}
+
+
 // Replay a recorded frame file. Same downstream path as the live feed, which is
 // the point: benchmarks stop depending on what the market happened to be doing.
 template <class RawQ>
@@ -453,6 +504,15 @@ static void replay_file(const Config& cfg, RawQ& raw_q, Stats& stats, uint64_t& 
     const auto started = steady::now();
     uint64_t n = 0;
     std::string line;
+
+    // --pace state. Each frame is due at the wall clock of the first timestamped
+    // frame plus its exchange-time offset divided by pace. Absolute targets
+    // rather than per-frame sleeps, so the OS timer's coarse granularity makes
+    // single frames late without the lateness accumulating -- and lateness is
+    // measured after the sleep, so an oversleep counts too.
+    std::optional<int64_t> t0_us;
+    steady::time_point w0{}, w_last{};
+    int64_t last_us = 0;
 
     while (std::getline(in, line) && !g_stop.load(std::memory_order_acquire))
     {
@@ -468,6 +528,27 @@ static void replay_file(const Config& cfg, RawQ& raw_q, Stats& stats, uint64_t& 
                 std::chrono::duration<double>(static_cast<double>(n) / cfg.speed));
             std::this_thread::sleep_until(target);
         }
+        else if (cfg.pace > 0.0)
+        {
+            if (const auto t = frame_time_us(line))
+            {
+                if (!t0_us)
+                {
+                    t0_us = *t;
+                    w0 = steady::now();
+                }
+                const auto target = w0 + std::chrono::duration_cast<steady::duration>(
+                    std::chrono::duration<double, std::micro>(static_cast<double>(*t - *t0_us) / cfg.pace));
+                if (target > steady::now())
+                    std::this_thread::sleep_until(target);
+
+                w_last = steady::now();
+                const int64_t late = std::chrono::duration_cast<std::chrono::microseconds>(w_last - target).count();
+                if (late > stats.replay_late_us.load(std::memory_order_relaxed))
+                    stats.replay_late_us.store(late, std::memory_order_relaxed);
+                last_us = std::max(last_us, *t);
+            }
+        }
 
         Raw raw;
         raw.recv = std::chrono::system_clock::now();
@@ -478,6 +559,12 @@ static void replay_file(const Config& cfg, RawQ& raw_q, Stats& stats, uint64_t& 
         stats.frames.fetch_add(1, std::memory_order_relaxed);
         offer(raw_q, std::move(raw), cfg, stats);
         ++n;
+    }
+
+    if (t0_us)
+    {
+        stats.replay_span_us.store(last_us - *t0_us);
+        stats.replay_wall_us.store(std::chrono::duration_cast<std::chrono::microseconds>(w_last - w0).count());
     }
 }
 
@@ -602,6 +689,15 @@ static int run_pipeline(const Config& cfg)
               << "  out-of-order  : " << stats.out_of_order.load() << "\n"
               << "  files touched : " << writer.files() << "\n";
 
+    if (cfg.pace > 0.0 && stats.replay_wall_us.load() > 0)
+    {
+        const double span = stats.replay_span_us.load() / 1e6;
+        const double wall = stats.replay_wall_us.load() / 1e6;
+        std::cerr << "  replay pace   : " << span / wall << "x real time (asked " << cfg.pace << "x) -- "
+                  << span << "s of market in " << wall << "s, worst frame "
+                  << stats.replay_late_us.load() / 1000.0 << " ms late\n";
+    }
+
     if (cfg.bench)
     {
         std::cerr << "\nbenchmark  queue=" << (cfg.queue == QueueKind::Spsc ? "spsc" : "mutex")
@@ -633,6 +729,7 @@ static bool parse_args(int argc, char** argv, Config& cfg)
         else if (a == "--parsers")  cfg.parsers = static_cast<unsigned>(std::stoul(need(i)));
         else if (a == "--capacity") cfg.capacity = static_cast<std::size_t>(std::stoul(need(i)));
         else if (a == "--speed")    cfg.speed = std::stod(need(i));
+        else if (a == "--pace")     cfg.pace = std::stod(need(i));
         else if (a == "--bench")    cfg.bench = true;
         else if (a == "--queue")
         {
@@ -669,6 +766,12 @@ static bool parse_args(int argc, char** argv, Config& cfg)
 
     if (cfg.bench && cfg.replay.empty())
         throw std::runtime_error("--bench needs --replay FILE");
+
+    if (cfg.pace > 0.0 && cfg.replay.empty())
+        throw std::runtime_error("--pace needs --replay FILE");
+
+    if (cfg.pace > 0.0 && cfg.speed > 0.0)
+        throw std::runtime_error("--pace and --speed are two ways to pace one replay; pick one");
 
     return true;
 }
