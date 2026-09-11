@@ -7,7 +7,7 @@ created in dependency order.
 The warehouse holds queries, not data: every view reads the JSONL on disk at
 the moment it is queried. The one thing materialised is the `bars` view,
 exported to data/warehouse/bars/symbol=<S>/ as Parquet, which is what
-notebooks/data.py loads.
+notebooks/data.py loads -- and only after it passes quality.check_bars.
 
 The SQL uses paths relative to the repo root, and DuckDB resolves them when a
 view is queried, not when it is created. Open the warehouse from the root:
@@ -20,10 +20,14 @@ on it before re-running this; the error names the process holding it.
 """
 
 import re
+import sys
 from graphlib import TopologicalSorter
 from pathlib import Path
 
 import duckdb
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import quality  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SQL_DIR = ROOT / "pipeline" / "sql"
@@ -65,6 +69,14 @@ def main() -> None:
     for name in build_order(models):
         con.sql(f"CREATE OR REPLACE VIEW {name} AS\n{models[name]}")
         print(f"view {name:<12} <- pipeline/sql/{name}.sql")
+
+    # The model only ever sees what passes here. Errors stop the export and the
+    # last good Parquet stays in place; anomalies are printed and let through.
+    findings = quality.check_bars(con.sql("FROM bars").df())
+    print(quality.summarize(findings))
+    if any(f.is_error for f in findings):
+        con.close()
+        sys.exit("bars failed quality checks; export skipped, previous Parquet left in place")
 
     # OVERWRITE replaces the directory instead of writing a second file beside
     # the first, so a rebuild can never double-count a partition.
