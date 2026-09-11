@@ -29,7 +29,7 @@ planted race.
                             ▼                           ▼                          ▼
                  notebooks/volatility.py        services/api (FastAPI)     notebooks/main.py
                  walk-forward forecast          /bars /ticks /quality      the returns model
-                                                /forecast /health
+                                                /forecast /health ◀── services/dashboard (Streamlit)
 ```
 
 ## Results
@@ -45,7 +45,7 @@ planted race.
 | Volatility forecast beats persistence | **21.6% lower MAE** (20.0% vs the 24-hour mean) | Walk-forward, 11 weekly folds, gradient boosting chosen in advance. It wins all 11 folds. **Control:** trained on shuffled labels, it does 14% *worse* than the baseline |
 | Streaming results survive a consumer crash | streamed bars == batch bars, crash included | The consumer is killed mid-minute and restarted. **Control:** committing the last offset read instead loses 5 of 30 trades in that bar |
 
-`uv run pytest` — 61 tests, about 30 s. The broker tests need `docker compose -f docker/compose.yml up -d`.
+`uv run pytest` — 65 tests, about 30 s. The broker tests need `docker compose -f docker/compose.yml up -d`.
 
 ## What is where
 
@@ -58,6 +58,7 @@ planted race.
 | `pipeline/quality.py` | Schema, uniqueness, range and anomaly checks; thresholds set from clean data only |
 | `pipeline/quality_benchmark.py` | The injected-error benchmark behind the 99.2% |
 | `services/api/` | FastAPI: keyset pagination, per-client rate limit, UTC everywhere, OpenAPI docs at `/docs` |
+| `services/dashboard/` | Streamlit dashboard — a pure client of the API, so it deploys as its own container |
 | `streaming/` | Redpanda producer (idempotent, paced) and consumer (open-bar-aware commits, upserts) |
 | `notebooks/` | Modelling: `volatility.py` (the forecast), `main.py` (the returns model, kept as a negative result) |
 | `tests/` | Everything above, as black-box and unit tests |
@@ -71,6 +72,7 @@ uv run python pipeline/compact_ticks.py            # closed hours → Parquet la
 uv run python pipeline/build_warehouse.py          # views, quality gate, bars → Parquet
 uv run python notebooks/volatility.py              # walk-forward forecast + next hour
 uv run uvicorn app:app --app-dir services/api      # http://localhost:8000/docs
+uv run streamlit run services/dashboard/app.py     # http://localhost:8501  (API_URL to point it elsewhere)
 docker compose -f docker/compose.yml up -d         # Redpanda
 uv run python streaming/producer.py --pace 100
 uv run python streaming/consumer.py --exit-when-idle 5
