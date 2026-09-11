@@ -14,34 +14,21 @@ planted race.
   <img alt="The Streamlit dashboard: latest price, the volatility forecast, data quality and live ticks" src="img/dashboard.png">
 </picture>
 
-*The dashboard (`services/dashboard/`), reading everything through the API. The blue banner is
-its freshness check: the bars end on 2026-08-11, so it names the scripts to re-run.
-These screenshots follow your GitHub theme -- light and dark are both captured from the app.*
+*The dashboard (`services/dashboard/`), reading everything through the API -- it never opens a
+Parquet file itself. Captured 2026-09-11 with bars and ticks current; these screenshots follow
+your GitHub theme, light and dark both taken from the running app.*
 
 ## How it fits together
 
-```
- Coinbase WSS ──▶ feed_handler (C++20) ──▶ data/raw/ticks/…/ticks.jsonl      landing zone
-                  source → queue/ring → parser pool → reorder → writer       (crash-safe JSONL)
-                                                        │
-                        pipeline/compact_ticks.py ◀─────┘  quality-gated, closed hours only
-                                     │
-                                     ▼
-                  data/lake/ticks/symbol=/dt=/hour=/ticks.parquet            tick lake
-                                     │                           │
- Coinbase REST ──▶ candles_1h.jsonl  │                           └──▶ streaming/producer.py (100×)
-                        │            │                                      │ Redpanda topic
-                        ▼            ▼                                      ▼
-            pipeline/sql/*.sql ──▶ data/warehouse.duckdb (views)   streaming/consumer.py
-                        │                                            → one-minute bars in DuckDB
-            build_warehouse.py ── quality gate ──▶ data/warehouse/bars/ (Parquet)
-                                                        │
-                            ┌───────────────────────────┼──────────────────────────┐
-                            ▼                           ▼                          ▼
-                 notebooks/volatility.py        services/api (FastAPI)     notebooks/main.py
-                 walk-forward forecast          /bars /ticks /quality      the returns model
-                                                /forecast /health ◀── services/dashboard (Streamlit)
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/architecture-dark.png">
+  <img alt="Two ingest paths -- the C++ feed handler from the Coinbase websocket, and the REST candle backfill -- landing as JSONL, passing quality gates into a Parquet tick lake and DuckDB-built bars, and served by FastAPI" src="img/architecture.png">
+</picture>
+
+Nothing calls anything: every connection is a file, a view or a topic, so any piece rebuilds
+without touching the others. The two teal boxes are the quality gates, where bad data stops --
+a closed hour with an error-level finding is held back from the lake, and a `bars` export with
+one never replaces the Parquet the model reads.
 
 ## Results
 
@@ -53,7 +40,7 @@ These screenshots follow your GitHub theme -- light and dark are both captured f
 | Zero data loss on graceful shutdown | 29,792 read → 29,792 written | Paced replay interrupted at 1.5 s. Every accepted frame drained, exit 0, every file ends on a complete record |
 | 100× real-time replay | 99.89× (asked 100×) | 300 s of market data in 3.003 s, scheduled from exchange timestamps, worst frame 28 ms late (Windows timer granularity) |
 | Quality checks catch injected errors | **873 of 880 (99.2%)** | 22 error classes × 40 trials in real data; one error per trial, credited only if the exact row is flagged. **Control:** a no-op injection is caught 0 of 200 times |
-| Volatility forecast beats persistence | **21.6% lower MAE** (20.0% vs the 24-hour mean) | Walk-forward, 11 weekly folds, gradient boosting chosen in advance. It wins all 11 folds. **Control:** trained on shuffled labels, it does 14% *worse* than the baseline |
+| Volatility forecast beats persistence | **21.0% lower MAE** (19.7% vs the 24-hour mean) | Walk-forward, 11 weekly folds, gradient boosting chosen in advance. It wins all 11 folds. **Control:** trained on shuffled labels, it does 14% *worse* than the baseline |
 | Streaming results survive a consumer crash | streamed bars == batch bars, crash included | The consumer is killed mid-minute and restarted. **Control:** committing the last offset read instead loses 5 of 30 trades in that bar |
 
 `uv run pytest` — 65 tests, about 30 s. The broker tests need `docker compose -f docker/compose.yml up -d`.
@@ -85,8 +72,8 @@ it has every bar.
 
 **The forecast, checked against reality.** Blue is the volatility that actually happened.
 Orange is the model's forecast, made before the hour. Green is persistence, the naive
-"next hour looks like this one." Orange tracks blue more closely than green does: 21.6% lower
-average error over 1,716 out-of-sample hours.
+"next hour looks like this one." Orange tracks blue more closely than green does: 21.0% lower
+average error over 1,716 out-of-sample hours, winning all 11 weekly folds.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/dashboard-volatility-dark.png">
