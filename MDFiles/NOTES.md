@@ -138,3 +138,34 @@ Lines end `\r\n`, because text mode on Windows translates `\n` to CRLF. It parse
 (`json.loads` and `pandas.read_json(lines=True)` both cope), so it's cosmetic — but
 `newline="\n"` on the `open()` call pins it to LF everywhere. Do it whenever I'm next in
 that function.
+
+---
+
+## 2026-09-06 — `pd.read_json` left the timestamps as strings
+
+First run of the ported pipeline died on:
+
+```
+ValueError: Invalid format specifier '%Y-%m-%d' for object of type 'str'
+```
+
+`pd.read_json(path, lines=True)` only auto-converts a column to datetime when it likes the
+shape of the values. Our `"time"` field is ISO 8601 **with a `+00:00` offset**, and it left
+the whole column as `object` dtype — plain strings.
+
+What makes this one sneaky is how far it got before failing. Sorting worked (ISO 8601
+strings sort in the same order as the timestamps they represent), `set_index` worked, and
+printing the frame looked completely normal. The only thing that noticed was the
+`{ts:%Y-%m-%d}` format spec in the header line — a date format spec is meaningless on a
+`str`, so that's where it finally raised. Every feature calculation upstream of it would
+have run happily on a string index.
+
+Fix is one line in `load_prices`, before the sort:
+
+```python
+df["time"] = pd.to_datetime(df["time"], utc=True)
+```
+
+Lesson: don't trust an inferred dtype because the values *print* the way you expect. If
+anything downstream does date arithmetic — resampling, `.dt` accessors, time-based
+slicing — check `.dtype` first. It would have silently no-op'd a `resample()` too.
